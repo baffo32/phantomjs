@@ -30,7 +30,7 @@
 
 #include "webserver.h"
 
-#include "mongoose.h"
+#include "mongoose/mongoose.h"
 
 #include <QByteArray>
 #include <QHostAddress>
@@ -112,12 +112,49 @@ void WebServer::close()
     }
 }
 
+namespace UrlEncodedParser {
+
+QString unescape(QByteArray in)
+{
+    // first step: decode '+' to spaces
+    for(int i = 0; i < in.length(); ++i) {
+        QByteRef c = in[i];
+        if (c == '+') {
+            c = ' ';
+        }
+    }
+    // now decode as usual
+    return QUrl::fromPercentEncoding(in);
+};
+
+// Parse a application/x-www-form-urlencoded data string
+QVariantMap parse(const QByteArray &data) {
+    QVariantMap ret;
+    if (data.isEmpty()) {
+        return ret;
+    }
+    foreach(const QByteArray &part, data.split('&')) {
+        const int eqPos = part.indexOf('=');
+        if (eqPos == -1) {
+            ret[unescape(part)] = "";
+        } else {
+            const QByteArray key = part.mid(0, eqPos);
+            const QByteArray value = part.mid(eqPos + 1);
+            ret[unescape(key)] = unescape(value);
+        }
+    }
+
+    return ret;
+}
+
+}
+
 void WebServer::handleRequest(mg_event event, mg_connection *conn, const mg_request_info *request,
                               bool *handled)
 {
     Q_ASSERT(QThread::currentThread() == thread());
     if (event == MG_NEW_REQUEST) {
-        WebServerResponse responseObj(conn);
+        WebServerResponse* responseObj = new WebServerResponse(conn);
 
         // Modelled after http://nodejs.org/docs/latest/api/http.html#http.ServerRequest
         QVariantMap requestObject;
@@ -155,7 +192,24 @@ void WebServer::handleRequest(mg_event event, mg_connection *conn, const mg_requ
         }
         requestObject["headers"] = headersObject;
 
-        emit newRequest(requestObject, &responseObj);
+        if ((requestObject["method"] == "POST" || requestObject["method"] == "PUT")
+            && headersObject.contains("Content-Length"))
+        {
+            bool ok = false;
+            uint contentLength = headersObject["Content-Length"].toUInt(&ok);
+            if (ok) {
+                contentLength += 1; // allow \0 at end
+                char * data = new char[contentLength];
+                int read = mg_read(conn, data, contentLength);
+                QByteArray rawData(data, read);
+                requestObject["rawData"] = rawData;
+                if (headersObject["Content-Type"] == "application/x-www-form-urlencoded") {
+                    requestObject["post"] = UrlEncodedParser::parse(rawData);
+                }
+            }
+        }
+
+        emit newRequest(requestObject, responseObj);
         *handled = true;
         return;
     }
@@ -166,12 +220,14 @@ void WebServer::handleRequest(mg_event event, mg_connection *conn, const mg_requ
 //BEGIN WebServerResponse
 
 WebServerResponse::WebServerResponse(mg_connection *conn)
-    : m_conn(conn)
+    : QObject()
+    , m_conn(conn)
     , m_statusCode(200)
     , m_headersSent(false)
 {
-
+    mg_detach(m_conn, 1);
 }
+
 
 const char* responseCodeString(int code)
 {
@@ -288,6 +344,14 @@ void WebServerResponse::write(const QString &body)
     const QByteArray data = body.toLocal8Bit();
     mg_write(m_conn, data.constData(), data.size());
 }
+
+
+void WebServerResponse::close()
+{
+    mg_close_detached_connection(m_conn);
+    deleteLater();
+}
+
 
 int WebServerResponse::statusCode() const
 {
