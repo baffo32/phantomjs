@@ -34,6 +34,9 @@
 #include <QMap>
 #include <QVariantMap>
 #include <QWebPage>
+#include <QWebFrame>
+
+#include "replcompletable.h"
 
 class Config;
 class CustomPage;
@@ -41,7 +44,7 @@ class NetworkAccessManager;
 class QWebInspector;
 class Phantom;
 
-class WebPage: public QObject
+class WebPage: public REPLCompletable, public QWebFrame::PrintCallback
 {
     Q_OBJECT
     Q_PROPERTY(QString content READ content WRITE setContent)
@@ -51,6 +54,7 @@ class WebPage: public QObject
     Q_PROPERTY(QVariantMap paperSize READ paperSize WRITE setPaperSize)
     Q_PROPERTY(QVariantMap clipRect READ clipRect WRITE setClipRect)
     Q_PROPERTY(QVariantMap scrollPosition READ scrollPosition WRITE setScrollPosition)
+    Q_PROPERTY(QVariantMap customHeaders READ customHeaders WRITE setCustomHeaders)
 
 public:
     WebPage(QObject *parent, const Config *config, const QUrl &baseUrl = QUrl());
@@ -77,13 +81,21 @@ public:
     void setPaperSize(const QVariantMap &size);
     QVariantMap paperSize() const;
 
+    void setCustomHeaders(const QVariantMap &headers);
+    QVariantMap customHeaders() const;
+
     void showInspector(const int remotePort = -1);
+
+    QString footer(int page, int numPages);
+    qreal footerHeight() const;
+    QString header(int page, int numPages);
+    qreal headerHeight() const;
 
 public slots:
     void openUrl(const QString &address, const QVariant &op, const QVariantMap &settings);
     void release();
 
-    QVariant evaluate(const QString &code);
+    QVariant evaluateJavaScript(const QString &code);
     bool render(const QString &fileName);
     bool injectJs(const QString &jsFilePath);
     void _appendScriptElement(const QString &scriptUrl);
@@ -95,12 +107,25 @@ signals:
     void loadStarted();
     void loadFinished(const QString &status);
     void javaScriptAlertSent(const QString &msg);
-    void javaScriptConsoleMessageSent(const QString &message, int lineNumber, const QString &source);
+    void javaScriptConsoleMessageSent(const QString &message);
+    void javaScriptErrorSent(const QString &message, const QVariantList &backtrace);
     void resourceRequested(const QVariant &req);
     void resourceReceived(const QVariant &resource);
 
 private slots:
     void finish(bool ok);
+
+private:
+    QImage renderImage();
+    bool renderPdf(const QString &fileName);
+    void applySettings(const QVariantMap &defaultSettings);
+    QString userAgent() const;
+
+    void emitAlert(const QString &msg);
+    void emitConsoleMessage(const QString &msg);
+    void emitError(const QWebPage::JavaScriptError& error);
+
+    virtual void initCompletions();
 
 private:
     CustomPage *m_webPage;
@@ -111,14 +136,6 @@ private:
     QVariantMap m_paperSize; // For PDF output via render()
     QString m_libraryPath;
     QWebInspector* m_inspector;
-
-    QImage renderImage();
-    bool renderPdf(const QString &fileName);
-    void applySettings(const QVariantMap &defaultSettings);
-    QString userAgent() const;
-
-    void emitAlert(const QString &msg);
-    void emitConsoleMessage(const QString &msg, int lineNumber, const QString &source);
 
     friend class Phantom;
     friend class CustomPage;
