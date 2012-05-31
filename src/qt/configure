@@ -4767,7 +4767,8 @@ fi
 
 # symlink includes
 if [ -n "$PERL" ] && [ -x "$relpath/bin/syncqt" ]; then
-    SYNCQT_OPTS=
+    # only include the modules left in our sourcetree
+    SYNCQT_OPTS="-module QtGui -module QtCore -module QtXml -module QtNetwork -module QtWebKit"
     [ "$CFG_DEV" = "yes" ] && SYNCQT_OPTS="$SYNCQT_OPTS -check-includes"
     if [ "$OPT_SHADOW" = "yes" ]; then
         "$outpath/bin/syncqt" $SYNCQT_OPTS || exit 1
